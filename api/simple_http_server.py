@@ -9,6 +9,8 @@
 
 import json
 import asyncio
+import os
+import mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from threading import Thread
@@ -31,18 +33,9 @@ class SimpleHTTPHandler(BaseHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         
-        if path == '/':
-            self._send_json_response({
-                "message": "Welcome to Polytool API",
-                "version": "0.1.0",
-                "docs": "Currently using simple HTTP server. Install fastapi for full features.",
-                "status": "running",
-                "endpoints": {
-                    "/": "API信息",
-                    "/health": "健康检查",
-                    "/chat": "POST - 与ChatBot对话"
-                }
-            })
+        # 聊天页面路由
+        if path == '/chat-ui' or path == '/':
+            self._serve_chat_page()
         elif path == '/health':
             self._send_json_response({
                 "status": "healthy",
@@ -59,9 +52,11 @@ class SimpleHTTPHandler(BaseHTTPRequestHandler):
                 <h1>Polytool API 简单文档</h1>
                 <h2>可用端点:</h2>
                 <ul>
-                    <li><strong>GET /</strong> - API信息</li>
+                    <li><strong>GET /</strong> - 聊天Web界面</li>
+                    <li><strong>GET /chat-ui</strong> - 聊天Web界面</li>
                     <li><strong>GET /health</strong> - 健康检查</li>
                     <li><strong>POST /chat</strong> - 与ChatBot对话</li>
+                    <li><strong>GET /static/*</strong> - 静态文件服务</li>
                 </ul>
                 <h3>POST /chat 示例:</h3>
                 <pre>
@@ -71,9 +66,12 @@ class SimpleHTTPHandler(BaseHTTPRequestHandler):
 }
                 </pre>
                 <p>注意：这是简化版HTTP服务器。要获得完整功能，请安装 fastapi 和 uvicorn。</p>
+                <p><a href="/chat-ui">点击进入聊天界面</a></p>
             </body>
             </html>
             """)
+        elif path.startswith('/static/'):
+            self._serve_static_file(path)
         else:
             self._send_error(404, "Not Found")
     
@@ -142,6 +140,61 @@ class SimpleHTTPHandler(BaseHTTPRequestHandler):
         if self.server_instance and self.server_instance.logger:
             self.server_instance.logger.info(f"{self.client_address[0]} - {format % args}")
 
+    def _serve_chat_page(self):
+        """提供聊天页面"""
+        try:
+            # 获取项目根目录
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            chat_html_path = os.path.join(current_dir, 'web', 'templates', 'chat.html')
+            
+            if os.path.exists(chat_html_path):
+                with open(chat_html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self._send_html_response(content)
+            else:
+                self._send_error(404, "Chat page not found")
+        except Exception as e:
+            self._send_error(500, f"Error serving chat page: {str(e)}")
+
+    def _serve_static_file(self, path):
+        """提供静态文件服务"""
+        try:
+            # 移除 /static/ 前缀
+            file_path = path[8:]  # 去掉 '/static/'
+            
+            # 获取项目根目录
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            full_path = os.path.join(current_dir, 'web', 'static', file_path)
+            
+            # 安全检查：确保路径在static目录内
+            static_dir = os.path.join(current_dir, 'web', 'static')
+            if not os.path.abspath(full_path).startswith(os.path.abspath(static_dir)):
+                self._send_error(403, "Forbidden")
+                return
+            
+            if os.path.exists(full_path) and os.path.isfile(full_path):
+                # 获取MIME类型
+                mime_type, _ = mimetypes.guess_type(full_path)
+                if mime_type is None:
+                    mime_type = 'application/octet-stream'
+                
+                # 读取文件内容
+                with open(full_path, 'rb') as f:
+                    content = f.read()
+                
+                # 发送响应
+                self.send_response(200)
+                self.send_header('Content-Type', mime_type)
+                self.send_header('Content-Length', str(len(content)))
+                self.send_header('Cache-Control', 'public, max-age=3600')  # 缓存1小时
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self._send_error(404, "File not found")
+                
+        except Exception as e:
+            self._send_error(500, f"Error serving static file: {str(e)}")
+
 
 class SimpleHTTPServer:
     """简单HTTP服务器类"""
@@ -159,6 +212,7 @@ class SimpleHTTPServer:
         
         self.httpd = None
         self.server_thread = None
+        self._shutdown_event = False  # 添加关闭标志
         
         # 将服务器实例传递给处理器类
         SimpleHTTPHandler.server_instance = self
@@ -200,7 +254,7 @@ class SimpleHTTPServer:
         """同步处理聊天请求（用于HTTP处理器）"""
         try:
             # 获取ChatBot实例
-            chatbot = self.agent_manager.get_agent(self.default_chatbot_id)
+            chatbot = self.agent_manager.active_agents.get(self.default_chatbot_id)
             if not chatbot:
                 return {
                     "status": "error",
@@ -273,8 +327,8 @@ class SimpleHTTPServer:
             
             # 保持主线程运行
             try:
-                while True:
-                    await asyncio.sleep(1)
+                while not self._shutdown_event:
+                    await asyncio.sleep(0.1)  # 减少睡眠时间以更快响应关闭信号
             except KeyboardInterrupt:
                 self.logger.info("接收到中断信号")
                 
@@ -302,11 +356,25 @@ class SimpleHTTPServer:
         """关闭简单HTTP服务器"""
         self.logger.info("正在关闭简单HTTP服务器...")
         
-        if self.httpd:
-            self.httpd.shutdown()
-            self.httpd.server_close()
+        # 设置关闭标志，让run循环退出
+        self._shutdown_event = True
         
-        if self.server_thread:
-            self.server_thread.join(timeout=5)
+        try:
+            if self.httpd:
+                # 首先停止服务器接受新连接
+                self.httpd.shutdown()
+                self.httpd.server_close()
+                self.logger.debug("HTTP服务器已停止接受新连接")
+            
+            if self.server_thread and self.server_thread.is_alive():
+                # 等待线程结束，但不要无限等待
+                self.server_thread.join(timeout=2)  # 减少超时时间
+                if self.server_thread.is_alive():
+                    self.logger.warning("服务器线程未能在2秒内正常结束")
+                else:
+                    self.logger.debug("服务器线程已正常结束")
+        
+        except Exception as e:
+            self.logger.error(f"关闭HTTP服务器时出错: {e}")
         
         self.logger.info("简单HTTP服务器已关闭")

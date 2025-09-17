@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polytool ChatBot - 智能聊天助手</title>
+    <link rel="stylesheet" href="/static/css/chat.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="chat-container">
+        <!-- 聊天标题栏 -->
+        <header class="chat-header">
+            <div class="header-content">
+                <div class="logo-section">
+                    <i class="fas fa-robot logo-icon"></i>
+                    <h1>Polytool ChatBot</h1>
+                </div>
+                <div class="header-actions">
+                    <button id="clear-chat" class="header-btn" title="清空对话">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    <button id="toggle-theme" class="header-btn" title="切换主题">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <button id="settings-btn" class="header-btn" title="设置">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 聊天消息区域 -->
+        <main class="chat-main">
+            <div id="messages-container" class="messages-container">
+                <!-- 欢迎消息 -->
+                <div class="message bot-message welcome-message">
+                    <div class="message-avatar">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="message-content">
+                        <div class="message-text">
+                            <h3>👋 欢迎使用 Polytool ChatBot！</h3>
+                            <p>我是您的智能助手，可以帮助您解答问题、进行对话交流。请随时向我提问！</p>
+                            <div class="quick-actions">
+                                <button class="quick-btn" data-message="你好，请介绍一下你自己">自我介绍</button>
+                                <button class="quick-btn" data-message="你能帮我做什么？">功能介绍</button>
+                                <button class="quick-btn" data-message="今天天气怎么样？">天气查询</button>
+                                <button class="quick-btn" data-message="请帮我写一首诗">创意写作</button>
+                            </div>
+                        </div>
+                        <div class="message-time">
+                            <span id="welcome-time"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 输入区域 -->
+        <footer class="chat-input-section">
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea 
+                        id="message-input" 
+                        placeholder="输入您的消息..." 
+                        rows="1"
+                        maxlength="1000"
+                    ></textarea>
+                    <div class="input-actions">
+                        <button id="attach-btn" class="input-btn" title="附件" disabled>
+                            <i class="fas fa-paperclip"></i>
+                        </button>
+                        <button id="emoji-btn" class="input-btn" title="表情" disabled>
+                            <i class="fas fa-smile"></i>
+                        </button>
+                    </div>
+                </div>
+                <button id="send-btn" class="send-btn" disabled>
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            <div class="input-info">
+                <span id="char-counter">0/1000</span>
+                <span class="divider">|</span>
+                <span id="connection-status" class="status-indicator">
+                    <i class="fas fa-circle"></i>
+                    已连接
+                </span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 设置面板 -->
+    <div id="settings-panel" class="settings-panel hidden">
+        <div class="panel-content">
+            <div class="panel-header">
+                <h3>设置</h3>
+                <button id="close-settings" class="close-btn">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="panel-body">
+                <div class="setting-group">
+                    <label for="session-id">会话ID</label>
+                    <input type="text" id="session-id" value="" placeholder="自动生成">
+                    <small>用于维护对话上下文</small>
+                </div>
+                <div class="setting-group">
+                    <label for="api-endpoint">API端点</label>
+                    <input type="text" id="api-endpoint" value="/chat" readonly>
+                    <small>ChatBot API接口地址</small>
+                </div>
+                <div class="setting-group">
+                    <label>
+                        <input type="checkbox" id="auto-scroll"> 
+                        自动滚动到最新消息
+                    </label>
+                </div>
+                <div class="setting-group">
+                    <label>
+                        <input type="checkbox" id="show-timestamp"> 
+                        显示时间戳
+                    </label>
+                </div>
+                <div class="setting-group">
+                    <label>
+                        <input type="checkbox" id="sound-enabled"> 
+                        消息提示音
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载指示器 -->
+    <div id="loading-indicator" class="loading-indicator hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <span>ChatBot正在思考中...</span>
+        </div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div id="error-toast" class="toast error-toast hidden">
+        <i class="fas fa-exclamation-circle"></i>
+        <span id="error-message"></span>
+        <button id="close-error" class="close-btn">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+
+    <!-- 成功提示 -->
+    <div id="success-toast" class="toast success-toast hidden">
+        <i class="fas fa-check-circle"></i>
+        <span id="success-message"></span>
+    </div>
+
+    <script src="/static/js/chat.js"></script>
+    <script>
+        // 初始化欢迎消息时间
+        document.addEventListener('DOMContentLoaded', function() {
+            const welcomeTime = document.getElementById('welcome-time');
+            if (welcomeTime) {
+                welcomeTime.textContent = new Date().toLocaleTimeString('zh-CN');
+            }
+        });
+    </script>
+</body>
+</html>

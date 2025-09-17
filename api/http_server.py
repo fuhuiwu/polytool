@@ -8,8 +8,11 @@ FastAPI HTTP服务器实现
 """
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import os
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import logging
@@ -70,6 +73,12 @@ class HTTPServer:
             allow_headers=["*"],
         )
         
+        # 静态文件服务
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        static_path = os.path.join(current_dir, 'web', 'static')
+        if os.path.exists(static_path):
+            self.app.mount("/static", StaticFiles(directory=static_path), name="static")
+        
         # 智能体管理器
         self.agent_manager = AgentManager()
         self.default_chatbot_id = "default_chatbot"
@@ -113,20 +122,31 @@ class HTTPServer:
     def _setup_routes(self):
         """设置API路由"""
         
-        @self.app.get("/")
-        async def root():
+        @self.app.get("/", response_class=HTMLResponse)
+        async def chat_ui():
+            """聊天Web界面"""
+            return await self._serve_chat_page()
+        
+        @self.app.get("/chat-ui", response_class=HTMLResponse)
+        async def chat_ui_alt():
+            """聊天Web界面（备用路由）"""
+            return await self._serve_chat_page()
+        
+        @self.app.get("/api/info")
+        async def api_info():
             return {
                 "message": "Welcome to Polytool API",
                 "version": "0.1.0",
                 "docs": "/docs",
-                "status": "running"
+                "status": "running",
+                "chat_ui": "/chat-ui"
             }
         
         @self.app.get("/health")
         async def health_check():
             return {
                 "status": "healthy",
-                "agents_count": len(self.agent_manager.agents),
+                "agents_count": len(self.agent_manager.active_agents),
                 "services": {
                     "llm_gateway": self.llm_gateway is not None,
                     "memory_manager": self.memory_manager is not None,
@@ -139,7 +159,7 @@ class HTTPServer:
             """与ChatBot对话"""
             try:
                 # 获取ChatBot实例
-                chatbot = self.agent_manager.get_agent(self.default_chatbot_id)
+                chatbot = await self.agent_manager.get_agent(self.default_chatbot_id)
                 if not chatbot:
                     raise HTTPException(status_code=500, detail="ChatBot未初始化")
                 
@@ -173,7 +193,7 @@ class HTTPServer:
         async def get_agents():
             """获取所有智能体列表"""
             agents_info = []
-            for agent_id, agent in self.agent_manager.agents.items():
+            for agent_id, agent in self.agent_manager.active_agents.items():
                 agents_info.append(AgentInfo(
                     agent_id=agent_id,
                     name=agent.name,
@@ -186,7 +206,7 @@ class HTTPServer:
         @self.app.get("/agents/{agent_id}", response_model=AgentInfo)
         async def get_agent(agent_id: str):
             """获取指定智能体信息"""
-            agent = self.agent_manager.get_agent(agent_id)
+            agent = await self.agent_manager.get_agent(agent_id)
             if not agent:
                 raise HTTPException(status_code=404, detail="智能体不存在")
             
@@ -201,7 +221,7 @@ class HTTPServer:
         @self.app.delete("/agents/{agent_id}/sessions/{session_id}")
         async def clear_conversation(agent_id: str, session_id: str):
             """清空指定智能体的对话历史"""
-            agent = self.agent_manager.get_agent(agent_id)
+            agent = await self.agent_manager.get_agent(agent_id)
             if not agent:
                 raise HTTPException(status_code=404, detail="智能体不存在")
             
@@ -210,6 +230,22 @@ class HTTPServer:
                 return {"status": "success", "message": "对话历史已清空"}
             else:
                 raise HTTPException(status_code=400, detail="该智能体不支持对话管理")
+    
+    async def _serve_chat_page(self):
+        """提供聊天页面"""
+        try:
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            chat_html_path = os.path.join(current_dir, 'web', 'templates', 'chat.html')
+            
+            if os.path.exists(chat_html_path):
+                with open(chat_html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return content
+            else:
+                raise HTTPException(status_code=404, detail="Chat page not found")
+        except Exception as e:
+            self.logger.error(f"Error serving chat page: {e}")
+            raise HTTPException(status_code=500, detail="Error serving chat page")
     
     async def run(self, host: str = None, port: int = None):
         """运行HTTP服务器"""
