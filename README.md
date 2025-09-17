@@ -102,4 +102,13 @@ TODO: 添加详细的开发文档和示例
 
 ## 许可证
 
-MIT License
+本项目采用 [MIT License](LICENSE) 开源许可证。
+
+## 贡献
+
+欢迎提交Issues和Pull Requests来帮助改进项目！
+
+## 联系方式
+
+- GitHub: [fuhuiwu](https://github.com/fuhuiwu)
+- 项目地址: [polytool](https://github.com/fuhuiwu/polytool)
