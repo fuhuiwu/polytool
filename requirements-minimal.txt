@@ -1,0 +1,16 @@
+# Polytool项目最小依赖
+# ===================
+# 仅包含核心功能所需的基本依赖
+
+# 标准库扩展
+pathlib2>=2.3.7; python_version < '3.4'
+
+# 可选：如果需要更好的异步支持
+# asyncio (内置于Python 3.7+)
+
+# 可选：如果需要YAML配置文件支持
+# pyyaml>=6.0.1
+
+# 可选：如果需要更强大的配置管理
+# pydantic>=2.5.0
+# pydantic-settings>=2.1.0
