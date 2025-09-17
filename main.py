@@ -25,6 +25,18 @@ from orchestration.memory_manager import MemoryManager
 from orchestration.tool_gateway import ToolGateway
 from api.server import APIServer
 
+# 尝试导入HTTP服务器
+try:
+    from api.http_server import HTTPServer
+    HTTP_SERVER_AVAILABLE = True
+except ImportError:
+    try:
+        from api.simple_http_server import SimpleHTTPServer as HTTPServer
+        HTTP_SERVER_AVAILABLE = True
+    except ImportError:
+        HTTPServer = None
+        HTTP_SERVER_AVAILABLE = False
+
 
 class PolytoolApplication:
     """
@@ -33,19 +45,22 @@ class PolytoolApplication:
     负责整个应用程序的初始化、配置和启动
     """
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, mode: str = "http"):
         """
         初始化Polytool应用程序
         
         Args:
             config_path: 配置文件路径，可选
+            mode: 运行模式 (http, cli, chat)
         """
         self.config_path = config_path
+        self.mode = mode
         self.logger = None
         self.llm_gateway = None
         self.memory_manager = None
         self.tool_gateway = None
         self.api_server = None
+        self.http_server = None
         
     async def initialize(self):
         """
@@ -99,25 +114,43 @@ class PolytoolApplication:
         """
         self.logger.info("🌐 初始化API服务器...")
         
-        self.api_server = APIServer(
-            llm_gateway=self.llm_gateway,
-            memory_manager=self.memory_manager,
-            tool_gateway=self.tool_gateway
-        )
-        
-        await self.api_server.initialize()
-        self.logger.info("✓ API服务器初始化完成")
+        if self.mode == "http":
+            # HTTP服务器模式
+            if HTTP_SERVER_AVAILABLE:
+                self.http_server = HTTPServer(
+                    llm_gateway=self.llm_gateway,
+                    memory_manager=self.memory_manager,
+                    tool_gateway=self.tool_gateway
+                )
+                await self.http_server.initialize()
+                self.logger.info("✓ HTTP服务器初始化完成")
+            else:
+                self.logger.error("❌ HTTP服务器不可用，请安装 fastapi 或使用 CLI 模式")
+                raise RuntimeError("HTTP服务器依赖不满足")
+        else:
+            # CLI/Chat模式
+            self.api_server = APIServer(
+                llm_gateway=self.llm_gateway,
+                memory_manager=self.memory_manager,
+                tool_gateway=self.tool_gateway
+            )
+            await self.api_server.initialize()
+            self.logger.info("✓ CLI服务器初始化完成")
     
     async def run(self):
         """
         运行应用程序
         """
         try:
-            self.logger.info(f"🌟 Polytool服务已启动，监听端口: {settings.SERVER_PORT}")
-            self.logger.info(f"📚 API文档地址: http://{settings.SERVER_HOST}:{settings.SERVER_PORT}/docs")
-            
-            # 启动API服务器
-            await self.api_server.run()
+            if self.mode == "http":
+                self.logger.info(f"🌟 Polytool HTTP服务启动，监听端口: {settings.SERVER_PORT}")
+                self.logger.info(f"📚 API文档地址: http://{settings.SERVER_HOST}:{settings.SERVER_PORT}/docs")
+                # 启动HTTP服务器
+                await self.http_server.run()
+            else:
+                self.logger.info(f"🌟 Polytool {self.mode.upper()}模式启动")
+                # 启动CLI服务器
+                await self.api_server.run()
             
         except KeyboardInterrupt:
             self.logger.info("👋 接收到中断信号，正在关闭服务...")
@@ -134,6 +167,9 @@ class PolytoolApplication:
         self.logger.info("🔄 正在优雅关闭应用程序...")
         
         # 关闭各个组件
+        if self.http_server:
+            await self.http_server.shutdown()
+            
         if self.api_server:
             await self.api_server.shutdown()
         
@@ -196,6 +232,14 @@ def create_arg_parser():
         version=f"Polytool {settings.VERSION}"
     )
     
+    parser.add_argument(
+        "--mode", "-m",
+        type=str,
+        choices=["http", "cli", "chat"],
+        default="http",
+        help="运行模式: http(HTTP服务器), cli(命令行界面), chat(聊天模式)"
+    )
+    
     return parser
 
 
@@ -218,7 +262,7 @@ async def main():
         settings.SERVER_HOST = args.host
     
     # 创建并运行应用程序
-    app = PolytoolApplication(config_path=args.config)
+    app = PolytoolApplication(config_path=args.config, mode=args.mode)
     
     try:
         await app.initialize()
